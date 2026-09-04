@@ -138,18 +138,3 @@ Silent failures detected: 3
 ```
 
 ---
-
-## LLM Configuration
-
-Set one of these in your `.env`:
-```
-LLM_PROVIDER=gemini
-GEMINI_API_KEY=your_key_here
-```
-or
-```
-LLM_PROVIDER=openai
-OPENAI_API_KEY=your_key_here
-```
-
-If no key is configured, records that reach Stage 5 are safely marked as **Unknown exceptions** instead of crashing.
