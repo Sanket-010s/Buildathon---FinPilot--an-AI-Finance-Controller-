@@ -64,3 +64,9 @@ def get_summary(db: Session = Depends(db_module.get_db)):
         total_refunds=data["total_refunds"],
         silent_failures=data["silent_failures"],
     )
+
+
+@router.get("/records")
+def get_all_records(db: Session = Depends(db_module.get_db)):
+    """Return all reconciliation records for the overview table."""
+    return db_module.get_all_records(db)

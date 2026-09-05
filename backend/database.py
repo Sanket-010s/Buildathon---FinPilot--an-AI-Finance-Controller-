@@ -62,8 +62,14 @@ def persist_source_data(
 ) -> None:
     """
     Upsert raw source records into the DB so /records/{id}/audit can
-    reference full raw data. Uses INSERT OR REPLACE for idempotency.
+    reference full raw data. Clears existing source data first so
+    switching datasets always reflects the new data.
     """
+    db.execute(text("DELETE FROM orders"))
+    db.execute(text("DELETE FROM payments"))
+    db.execute(text("DELETE FROM settlements"))
+    db.execute(text("DELETE FROM refunds"))
+    db.commit()
     # Orders
     for _, row in orders_df.iterrows():
         db.merge(Order(
@@ -247,6 +253,33 @@ def get_summary(db: Session) -> dict:
         "total_refunds": round(total_refunds, 2),
         "silent_failures": silent_failures,
     }
+
+
+def get_all_records(db: Session) -> list[dict]:
+    """All reconciliation records for the overview table."""
+    rows = db.execute(text(
+        "SELECT record_id, order_id, resolved_amount, created_at, "
+        "match_stage, status, ai_explanation, human_review_status "
+        "FROM reconciliation_results ORDER BY created_at DESC"
+    )).fetchall()
+
+    results = []
+    for r in rows:
+        record_id, order_id, amount, created_at, stage, status, ai_exp, hr_status = r
+        order_row = db.execute(text(
+            "SELECT order_date FROM orders WHERE order_id = :oid"
+        ), {"oid": order_id}).fetchone()
+        results.append({
+            "record_id": record_id,
+            "order_id": order_id,
+            "order_amount": amount,
+            "order_date": order_row[0] if order_row else None,
+            "match_stage": stage,
+            "status": status,
+            "ai_explanation": ai_exp,
+            "human_review_status": hr_status,
+        })
+    return results
 
 
 def get_exceptions(db: Session) -> list[dict]:

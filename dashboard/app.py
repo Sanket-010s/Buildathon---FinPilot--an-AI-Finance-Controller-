@@ -162,6 +162,11 @@ st.markdown(f"""
         margin: 1.2rem 0;
     }}
 
+    /* Button text */
+    .stButton > button {{
+        color: white !important;
+    }}
+
     /* Hide Streamlit branding */
     #MainMenu {{ visibility: hidden; }}
     footer {{ visibility: hidden; }}
@@ -248,12 +253,6 @@ def render_sidebar():
         st.markdown("<br>", unsafe_allow_html=True)
 
         # Run reconciliation button
-        st.markdown(
-            f"<div style='font-size:0.75rem; color:{COLORS['meta']}; "
-            "text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.4rem;'>"
-            "Actions</div>",
-            unsafe_allow_html=True,
-        )
         if st.button("▶  Run Reconciliation", use_container_width=True, type="primary"):
             with st.spinner("Reconciling records…"):
                 result = api_post("/reconcile/run")
@@ -264,17 +263,7 @@ def render_sidebar():
                 )
                 st.rerun()
 
-        # Status indicator
-        alive = backend_alive()
-        dot = "🟢" if alive else "🔴"
-        status_text = "Backend online" if alive else "Backend offline"
-        st.markdown(
-            f"<div style='position:absolute; bottom:1.5rem; left:1rem; right:1rem; "
-            f"font-size:0.75rem; color:{COLORS['meta']};'>"
-            f"{dot} {status_text}<br>"
-            f"<span style='font-size:0.7rem;'>localhost:8000</span></div>",
-            unsafe_allow_html=True,
-        )
+
 
 
 # ── Page: Overview ────────────────────────────────────────────────────────────
@@ -302,7 +291,6 @@ def page_overview():
     by_stage = summary.get("by_stage", {})
     match_rate_pct = round(summary.get("match_rate", 0) * 100, 1)
 
-    # Last-run timestamp helper
     st.markdown(
         f"<p class='fp-page-sub'>Last run results · "
         f"{summary['total_records']} records processed</p>",
@@ -330,79 +318,134 @@ def page_overview():
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Stage breakdown chart ─────────────────────────────────────────────────
-    st.markdown('<div class="fp-card">', unsafe_allow_html=True)
-    st.markdown(
-        f"<p style='font-weight:600; font-size:1rem; color:{COLORS['text']}; margin-bottom:0.8rem;'>"
-        "Match Stage Breakdown</p>",
-        unsafe_allow_html=True,
-    )
+    # ── All Transactions Table ────────────────────────────────────────────────
+    import pandas as pd
 
-    stage_labels = {
-        "exact":        "Exact Match",
-        "attribute":    "Attribute Match",
-        "fuzzy":        "Fuzzy Match",
-        "arithmetic":   "Arithmetic Verify",
-        "ai_explained": "AI-Explained",
-        "unresolved":   "Unresolved",
-    }
-    stage_colors_map = {
-        "exact":        COLORS["resolved"],
-        "attribute":    "#34D399",
-        "fuzzy":        "#60A5FA",
-        "arithmetic":   "#818CF8",
-        "ai_explained": COLORS["ai"],
-        "unresolved":   COLORS["exception"],
-    }
+    all_records = api_get("/reconcile/records") or []
 
-    chart_data = {
-        stage_labels[k]: by_stage.get(k, 0)
-        for k in stage_labels
-        if by_stage.get(k, 0) > 0
-    }
+    ai_records     = [r for r in all_records if r.get("match_stage") == "ai"]
+    unknown_records = [r for r in all_records if r.get("match_stage") == "unresolved"]
+    human_needed   = [r for r in all_records if r.get("human_review_status") is None
+                      and r.get("status") == "EXCEPTION"]
 
-    if chart_data:
-        import pandas as pd
+    def make_row(r):
+        stage = r.get("match_stage", "")
+        status = r.get("status", "")
+        if stage == "ai":
+            label = "🤖 AI-Explained"
+        elif stage == "unresolved":
+            label = "❓ Unknown"
+        elif status == "RESOLVED":
+            label = "✅ Resolved"
+        else:
+            label = stage.title()
+        hr = r.get("human_review_status")
+        review = "✅ Resolved" if hr == "resolved_manual" else ("🔺 Escalated" if hr == "escalated" else "—")
+        return {
+            "Record ID":   r.get("record_id", ""),
+            "Order ID":    r.get("order_id", ""),
+            "Amount (₹)": f"₹{r.get('order_amount', 0):,.2f}" if r.get("order_amount") else "—",
+            "Date":        r.get("order_date", "—") or "—",
+            "Stage":       stage.upper(),
+            "Status":      label,
+            "Review":      review,
+        }
 
-        chart_df = pd.DataFrame({
-            "Stage": list(chart_data.keys()),
-            "Count": list(chart_data.values()),
-        }).set_index("Stage")
-        st.bar_chart(chart_df, color=COLORS["accent"])
-    else:
-        st.caption("No stage data available.")
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # ── Secondary stats row ───────────────────────────────────────────────────
-    col_a, col_b, col_c = st.columns(3)
-    with col_a:
+    if all_records:
         st.markdown(
-            f"<div class='fp-card'>"
-            f"<p style='font-size:0.8rem;color:{COLORS['meta']};text-transform:uppercase;"
-            f"letter-spacing:0.05em;margin-bottom:0.3rem;'>Total Refunds</p>"
-            f"<p style='font-size:1.5rem;font-weight:600;color:{COLORS['text']};margin:0;'>"
-            f"₹{summary.get('total_refunds', 0):,.2f}</p></div>",
+            f"<p style='font-weight:600;font-size:1rem;color:{COLORS['text']};margin-bottom:0.4rem;'>"
+            "All Transactions</p>"
+            "<p style='font-size:0.78rem;color:#7C808A;margin-bottom:0.8rem;'>"
+            "<span style='color:#3B82F6;font-weight:600;'>■</span> AI-Explained &nbsp;"
+            "<span style='color:#F2994A;font-weight:600;'>■</span> Unknown &nbsp;"
+            "<span style='color:#22B573;font-weight:600;'>■</span> Resolved</p>",
             unsafe_allow_html=True,
         )
-    with col_b:
-        st.markdown(
-            f"<div class='fp-card'>"
-            f"<p style='font-size:0.8rem;color:{COLORS['meta']};text-transform:uppercase;"
-            f"letter-spacing:0.05em;margin-bottom:0.3rem;'>Silent Failures Detected</p>"
-            f"<p style='font-size:1.5rem;font-weight:600;color:{COLORS['exception']};margin:0;'>"
-            f"{summary.get('silent_failures', 0)}</p></div>",
-            unsafe_allow_html=True,
-        )
-    with col_c:
-        st.markdown(
-            f"<div class='fp-card'>"
-            f"<p style='font-size:0.8rem;color:{COLORS['meta']};text-transform:uppercase;"
-            f"letter-spacing:0.05em;margin-bottom:0.3rem;'>AI-Explained</p>"
-            f"<p style='font-size:1.5rem;font-weight:600;color:{COLORS['ai']};margin:0;'>"
-            f"{by_stage.get('ai_explained', 0)}</p></div>",
-            unsafe_allow_html=True,
-        )
+
+        rows = [make_row(r) for r in all_records]
+        df = pd.DataFrame(rows)
+
+        def row_style(row):
+            s = row["Status"]
+            if "AI" in s:
+                bg = "#EBF3FF"
+            elif "Unknown" in s:
+                bg = "#FFF4EB"
+            elif "Resolved" in s and "🔺" not in s:
+                bg = "#E6F9F1"
+            else:
+                bg = ""
+            return [f"background-color:{bg};color:#22242C" if bg else "color:#22242C" for _ in row]
+
+        styled = df.style.apply(row_style, axis=1)
+        st.markdown('<div class="fp-card" style="padding:0.5rem 1rem;">', unsafe_allow_html=True)
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # ── AI-Explained entries with explanation ─────────────────────────────
+        if ai_records:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown(
+                f"<p style='font-weight:600;font-size:1rem;color:{COLORS['ai']};margin-bottom:0.6rem;'>"
+                f"\U0001f916 AI-Explained Exceptions ({len(ai_records)})</p>",
+                unsafe_allow_html=True,
+            )
+            for r in ai_records:
+                exp = r.get("ai_explanation") or ""
+                if not exp:
+                    audit = api_get(f"/records/{r.get('record_id')}/audit") or {}
+                    for entry in audit.get("entries", []):
+                        if entry.get("stage") == "ai" and entry.get("ai_explanation"):
+                            exp = entry["ai_explanation"]
+                            break
+                if not exp:
+                    exp = "No explanation available."
+                amt = f"\u20b9{r.get('order_amount', 0):,.2f}" if r.get("order_amount") else "\u2014"
+                date = r.get("order_date") or "\u2014"
+                rid = r.get("record_id", "")
+                st.markdown(
+                    f"<div class='fp-card' style='border-left:4px solid {COLORS['ai']};padding:1rem 1.2rem;'>"
+                    f"<p style='font-size:0.82rem;font-weight:600;color:{COLORS['text']};margin-bottom:0.3rem;'>"
+                    f"{rid} &nbsp;\u00b7&nbsp; {amt} &nbsp;\u00b7&nbsp; {date}</p>"
+                    f"<p style='font-size:0.84rem;color:{COLORS['text']};line-height:1.6;margin:0;'>{exp}</p>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+        # ── Unknown entries ───────────────────────────────────────────────────
+        if unknown_records:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown(
+                f"<p style='font-weight:600;font-size:1rem;color:{COLORS['exception']};margin-bottom:0.6rem;'>"
+                f"\u2753 Unknown Exceptions ({len(unknown_records)})</p>",
+                unsafe_allow_html=True,
+            )
+            for r in unknown_records:
+                amt = f"\u20b9{r.get('order_amount', 0):,.2f}" if r.get("order_amount") else "\u2014"
+                date = r.get("order_date") or "\u2014"
+                rid = r.get("record_id", "")
+                stage = r.get("match_stage", "").upper()
+                st.markdown(
+                    f"<div class='fp-card' style='border-left:4px solid {COLORS['exception']};padding:1rem 1.2rem;'>"
+                    f"<p style='font-size:0.82rem;font-weight:600;color:{COLORS['text']};margin:0;'>"
+                    f"{rid} &nbsp;\u00b7&nbsp; {amt} &nbsp;\u00b7&nbsp; {date} &nbsp;\u00b7&nbsp; Stage: {stage}</p>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+        # ── Requires Human Review ─────────────────────────────────────────────
+        if human_needed:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown(
+                f"<p style='font-weight:600;font-size:1rem;color:{COLORS['accent']};margin-bottom:0.6rem;'>"
+                f"👤 Requires Human Review ({len(human_needed)})</p>",
+                unsafe_allow_html=True,
+            )
+            human_rows = [make_row(r) for r in human_needed]
+            human_df = pd.DataFrame(human_rows)
+            st.markdown('<div class="fp-card" style="padding:0.5rem 1rem;">', unsafe_allow_html=True)
+            st.dataframe(human_df, use_container_width=True, hide_index=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
     # Footer note
     st.markdown(
@@ -551,14 +594,12 @@ def page_detail():
         st.rerun()
         return
 
-    # Back button
     if st.button("← Back to Exceptions", key="back_btn"):
         st.session_state.page = "exceptions"
         st.session_state.selected_record = None
         st.rerun()
 
     data = api_get(f"/exceptions/{record_id}")
-
     if data is None:
         st.error(f"Could not load detail for record {record_id}.")
         return
@@ -566,141 +607,153 @@ def page_detail():
     audit = api_get(f"/records/{record_id}/audit") or {}
     audit_entries = audit.get("entries", [])
 
-    # Determine status chip
     stage = data.get("final_stage", "")
     if stage == "ai":
-        status_chip = f"<span class='chip-ai'>AI-Explained — needs confirmation</span>"
+        status_chip = "<span class='chip-ai'>AI-Explained</span>"
     elif stage == "unresolved":
-        status_chip = f"<span class='chip-exception'>Unknown Exception</span>"
+        status_chip = "<span class='chip-exception'>Unknown Exception</span>"
     else:
-        status_chip = f"<span class='chip-exception'>Exception</span>"
+        status_chip = "<span class='chip-exception'>Exception</span>"
 
-    # ── Header ────────────────────────────────────────────────────────────────
     st.markdown(
         f"<p class='fp-page-title'>{record_id} &nbsp; {status_chip}</p>",
         unsafe_allow_html=True,
     )
+
     if data.get("silent_failure"):
-        st.warning(
-            "⚠️ Silent failure detected — order was marked 'failed' but payment was captured.",
-            icon="⚠️",
-        )
+        st.warning("⚠️ Silent failure detected — order was marked 'failed' but payment was captured.", icon="⚠️")
 
-    # ── Record summary card ───────────────────────────────────────────────────
-    col_left, col_right = st.columns([1.2, 1])
-
-    with col_left:
-        st.markdown('<div class="fp-card">', unsafe_allow_html=True)
+    def kv(label, value, highlight=False):
+        color = COLORS["accent"] if highlight else COLORS["text"]
         st.markdown(
-            f"<p style='font-weight:600;font-size:0.9rem;color:{COLORS['text']};margin-bottom:0.8rem;'>"
-            "Order Summary</p>",
+            f"<div style='display:flex;justify-content:space-between;padding:0.35rem 0;border-bottom:1px solid #F1F3F8;'>"
+            f"<span style='font-size:0.82rem;color:{COLORS['meta']};'>{label}</span>"
+            f"<span style='font-size:0.84rem;font-weight:600;color:{color};'>{value}</span>"
+            f"</div>",
             unsafe_allow_html=True,
         )
 
-        def kv(label, value, highlight=False):
-            color = COLORS["text"] if not highlight else COLORS["accent"]
+    def section_title(title, color=None):
+        c = color or COLORS["text"]
+        st.markdown(
+            f"<p style='font-weight:700;font-size:0.85rem;color:{c};text-transform:uppercase;"
+            f"letter-spacing:0.05em;margin-bottom:0.6rem;'>{title}</p>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Row 1: Order · Payment · Settlement ───────────────────────────────────
+    col_order, col_pay, col_settle = st.columns(3)
+
+    with col_order:
+        st.markdown('<div class="fp-card" style="height:100%;">', unsafe_allow_html=True)
+        section_title("🧾 Order")
+        kv("Order ID", data.get("order_id") or "—")
+        kv("Amount", f"\u20b9{data['order_amount']:,.2f}" if data.get("order_amount") else "—", highlight=True)
+        kv("Date", data.get("order_date") or "—")
+        kv("Customer ID", data.get("customer_id") or "—")
+        kv("Gateway", data.get("gateway") or "—")
+        kv("Status", data.get("order_status") or "—")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with col_pay:
+        st.markdown('<div class="fp-card" style="height:100%;">', unsafe_allow_html=True)
+        section_title("💳 Payment")
+        kv("Payment ID", data.get("payment_id") or "Not found")
+        kv("Amount", f"\u20b9{data['payment_amount']:,.2f}" if data.get("payment_amount") else "—")
+        kv("Status", data.get("payment_status") or "—")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with col_settle:
+        st.markdown('<div class="fp-card" style="height:100%;">', unsafe_allow_html=True)
+        section_title("🏦 Settlement")
+        kv("Settlement ID", data.get("settlement_id") or "Not found")
+        kv("Net Amount", f"\u20b9{data['settlement_net']:,.2f}" if data.get("settlement_net") else "—")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Row 2: Reconciliation Trail ───────────────────────────────────────────
+    st.markdown('<div class="fp-card">', unsafe_allow_html=True)
+    section_title("🔍 Reconciliation Trail")
+
+    stage_display = {
+        "exact":      "Exact Match",
+        "attribute":  "Attribute Match",
+        "fuzzy":      "Fuzzy Match",
+        "arithmetic": "Arithmetic Check",
+        "ai":         "AI Explanation",
+        "unresolved": "Unresolved",
+    }
+    stage_colors = {
+        "exact": COLORS["resolved"],
+        "attribute": COLORS["resolved"],
+        "fuzzy": COLORS["resolved"],
+        "arithmetic": COLORS["resolved"],
+        "ai": COLORS["ai"],
+        "unresolved": COLORS["exception"],
+    }
+
+    if audit_entries:
+        for entry in audit_entries:
+            s = entry.get("stage", "")
+            s_label = stage_display.get(s, s.title())
+            s_color = stage_colors.get(s, COLORS["meta"])
+            reasoning = entry.get("reasoning") or "—"
+            dur = entry.get("duration_ms")
+            dur_str = f" &nbsp;<span style='color:{COLORS['meta']};font-weight:400;'>{dur:.1f}ms</span>" if dur else ""
             st.markdown(
-                f"<div style='display:flex;justify-content:space-between;"
-                f"padding:0.35rem 0;border-bottom:1px solid #F1F3F8;'>"
-                f"<span style='font-size:0.82rem;color:{COLORS['meta']};'>{label}</span>"
-                f"<span style='font-size:0.84rem;font-weight:600;color:{color};'>{value}</span>"
+                f"<div style='display:flex;align-items:flex-start;gap:1rem;padding:0.5rem 0;border-bottom:1px solid #F1F3F8;'>"
+                f"<span style='min-width:140px;font-size:0.8rem;font-weight:700;color:{s_color};'>{s_label}{dur_str}</span>"
+                f"<span style='font-size:0.84rem;color:{COLORS['text']};line-height:1.5;'>{reasoning}</span>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
+    else:
+        st.caption("No audit trail entries found.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-        kv("Order ID", data.get("order_id", "—"))
-        kv("Amount", f"₹{data.get('order_amount', 0):,.2f}" if data.get("order_amount") else "—", highlight=True)
-        kv("Order Date", data.get("order_date", "—"))
-        kv("Customer ID", data.get("customer_id", "—"))
-        kv("Gateway", data.get("gateway", "—"))
-        kv("Order Status", data.get("order_status", "—"))
-        kv("Payment ID", data.get("payment_id") or "Not found")
-        kv("Payment Amount", f"₹{data.get('payment_amount', 0):,.2f}" if data.get("payment_amount") else "—")
-        kv("Payment Status", data.get("payment_status") or "—")
-        kv("Settlement ID", data.get("settlement_id") or "Not found")
-        kv("Settlement Net", f"₹{data.get('settlement_net', 0):,.2f}" if data.get("settlement_net") else "—")
-        st.markdown('</div>', unsafe_allow_html=True)
+    # ── Row 3: AI Explanation ─────────────────────────────────────────────────
+    ai_exp = data.get("ai_explanation")
+    if not ai_exp:
+        for entry in audit_entries:
+            if entry.get("stage") == "ai" and entry.get("ai_explanation"):
+                ai_exp = entry["ai_explanation"]
+                break
 
-    with col_right:
-        # ── Stage attempt trail ───────────────────────────────────────────────
-        st.markdown('<div class="fp-card">', unsafe_allow_html=True)
+    if ai_exp:
         st.markdown(
-            f"<p style='font-weight:600;font-size:0.9rem;color:{COLORS['text']};margin-bottom:0.8rem;'>"
-            "Reconciliation Attempts</p>",
+            f"<div class='fp-card' style='border-left:4px solid {COLORS['ai']};'>",
             unsafe_allow_html=True,
         )
-
-        stage_display = {
-            "exact":      "Exact Match",
-            "attribute":  "Attribute Match",
-            "fuzzy":      "Fuzzy Match",
-            "arithmetic": "Arithmetic Check",
-            "ai":         "AI Explanation",
-            "unresolved": "Unresolved",
-        }
-
-        if audit_entries:
-            for entry in audit_entries:
-                s_label = stage_display.get(entry.get("stage", ""), entry.get("stage", "").title())
-                reasoning = entry.get("reasoning", "")
-                dur = entry.get("duration_ms")
-                dur_str = f" · {dur:.1f}ms" if dur else ""
-                st.markdown(
-                    f"<div class='stage-row'>"
-                    f"<span class='stage-label'>{s_label}</span>"
-                    f"<span class='stage-reason'>{reasoning}{dur_str}</span>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-        else:
-            st.caption("No audit trail entries found.")
-
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # ── AI Explanation block ──────────────────────────────────────────────────
-    if data.get("ai_explanation"):
-        st.markdown('<div class="fp-card">', unsafe_allow_html=True)
+        section_title("🤖 AI Explanation", color=COLORS["ai"])
         st.markdown(
-            f"<p style='font-weight:600;font-size:0.9rem;color:{COLORS['ai']};margin-bottom:0.5rem;'>"
-            "🤖 AI Explanation</p>"
             f"<p style='font-size:0.78rem;color:{COLORS['meta']};margin-bottom:0.8rem;font-style:italic;'>"
             "AI-suggested — requires human confirmation. The AI explains; it does not resolve.</p>",
             unsafe_allow_html=True,
         )
         st.markdown(
-            f"<p style='font-size:0.9rem;color:{COLORS['text']};line-height:1.6;'>"
-            f"{data['ai_explanation']}</p>",
+            f"<p style='font-size:0.9rem;color:{COLORS['text']};line-height:1.7;margin:0;'>{ai_exp}</p>",
             unsafe_allow_html=True,
         )
-
-        # Candidates
         candidates = data.get("candidates_considered", [])
         if candidates:
             st.markdown(
-                f"<p style='font-size:0.8rem;font-weight:600;color:{COLORS['meta']};"
-                "margin-top:1rem;margin-bottom:0.4rem;'>Candidates considered:</p>",
+                f"<p style='font-size:0.8rem;font-weight:600;color:{COLORS['meta']};margin-top:1rem;margin-bottom:0.4rem;'>"
+                "Candidates considered:</p>",
                 unsafe_allow_html=True,
             )
             for c in candidates:
-                amt_str = f"₹{c['amount']:,.2f}" if c.get("amount") else "—"
+                amt_str = f"\u20b9{c['amount']:,.2f}" if c.get("amount") else "—"
                 st.markdown(
-                    f"<div style='font-size:0.82rem;padding:0.3rem 0;'>"
-                    f"<b>{c.get('source','').upper()}</b> {c.get('id','—')} "
-                    f"· {amt_str} · {c.get('date','—')}</div>",
+                    f"<div style='font-size:0.82rem;padding:0.3rem 0;border-bottom:1px solid #F1F3F8;'>"
+                    f"<b>{c.get('source','').upper()}</b> &nbsp; {c.get('id','—')} &nbsp;·&nbsp; {amt_str} &nbsp;·&nbsp; {c.get('date','—')}"
+                    f"</div>",
                     unsafe_allow_html=True,
                 )
-
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # ── Action row ────────────────────────────────────────────────────────────
+    # ── Row 4: Human Review ───────────────────────────────────────────────────
     current_review = data.get("human_review_status")
-
     st.markdown('<div class="fp-card">', unsafe_allow_html=True)
-    st.markdown(
-        f"<p style='font-weight:600;font-size:0.9rem;color:{COLORS['text']};margin-bottom:0.8rem;'>"
-        "Human Review Decision</p>",
-        unsafe_allow_html=True,
-    )
+    section_title("👤 Human Review Decision")
 
     if current_review:
         review_labels = {
@@ -712,23 +765,16 @@ def page_detail():
         col_act1, col_act2, col_spacer = st.columns([1, 1, 3])
         with col_act1:
             if st.button("✅ Mark Resolved (Manual)", key="resolve_btn", use_container_width=True):
-                result = api_post(
-                    f"/exceptions/{record_id}/review",
-                    {"action": "resolved_manual"},
-                )
+                result = api_post(f"/exceptions/{record_id}/review", {"action": "resolved_manual"})
                 if result:
                     st.success("Marked as resolved.")
                     st.rerun()
         with col_act2:
             if st.button("🔺 Escalate", key="escalate_btn", use_container_width=True):
-                result = api_post(
-                    f"/exceptions/{record_id}/review",
-                    {"action": "escalated"},
-                )
+                result = api_post(f"/exceptions/{record_id}/review", {"action": "escalated"})
                 if result:
                     st.warning("Escalated for further review.")
                     st.rerun()
-
     st.markdown('</div>', unsafe_allow_html=True)
 
 
